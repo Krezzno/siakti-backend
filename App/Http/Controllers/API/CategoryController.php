@@ -1,55 +1,138 @@
 <?php
 
-namespace App\Http\Controllers\API;
+namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Category;
 use Illuminate\Http\Request;
-use Illuminate\Http\JsonResponse;
+use Illuminate\Validation\ValidationException;
 
 class CategoryController extends Controller
 {
-    public function index(Request $request): JsonResponse
+    /**
+     * GET /api/categories
+     * Filter: ?type=expense | ?type=income | (default: semua)
+     */
+    public function index(Request $request)
     {
-        $categories = $request->user()->categories()->with('type')->get();
-        return response()->json($categories);
+        $user = $request->user();
+
+        $query = Category::where('user_id', $user->id);
+
+        // Filter by type
+        if ($request->filled('type')) {
+            $type = $request->type;
+            if (!in_array($type, ['income', 'expense'])) {
+                throw ValidationException::withMessages([
+                    'type' => 'Type hanya boleh "income" atau "expense".'
+                ]);
+            }
+            $query->where('type', $type);
+        }
+
+        $categories = $query->orderBy('name')->get(['id', 'name', 'type']);
+
+        return response()->json([
+            'success' => true,
+            'data' => $categories
+        ]);
     }
 
-    public function store(Request $request): JsonResponse
+    /**
+     * POST /api/categories
+     * Required: name, type
+     */
+    public function store(Request $request)
     {
-        $data = $request->validate([
-            'category_type_id' => 'required|exists:category_types,id',
-            'category_name' => 'required|string|max:255',
+        $validated = $request->validate([
+            'name' => 'required|string|max:100|unique:categories,name,NULL,id,user_id,' . $request->user()->id . ',type,' . $request->type,
+            'type' => 'required|in:income,expense',
         ]);
 
-        $category = $request->user()->categories()->create($data);
-        $category->load('type');
-        return response()->json($category, 201);
-    }
-
-    public function show(Category $category): JsonResponse
-    {
-        $this->authorize('view', $category);
-        $category->load('type');
-        return response()->json($category);
-    }
-
-    public function update(Request $request, Category $category): JsonResponse
-    {
-        $this->authorize('update', $category);
-        $data = $request->validate([
-            'category_type_id' => 'sometimes|required|exists:category_types,id',
-            'category_name' => 'sometimes|required|string|max:255',
+        $category = Category::create([
+            'user_id' => $request->user()->id,
+            'name' => $validated['name'],
+            'type' => $validated['type'],
         ]);
-        $category->update($data);
-        $category->load('type');
-        return response()->json($category);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Kategori berhasil ditambahkan.',
+            'data' => $category
+        ], 201);
     }
 
-    public function destroy(Category $category): JsonResponse
+    /**
+     * GET /api/categories/{id}
+     */
+    public function show($id)
     {
-        $this->authorize('delete', $category);
+        $category = Category::where('user_id', auth()->id())
+                            ->findOrFail($id);
+
+        return response()->json(['success' => true, 'data' => $category]);
+    }
+
+    /**
+     * PUT/PATCH /api/categories/{id}
+     */
+    public function update(Request $request, $id)
+    {
+        $category = Category::where('user_id', auth()->id())->findOrFail($id);
+
+        $validated = $request->validate([
+            'name' => 'sometimes|required|string|max:100|unique:categories,name,' . $id . ',id,user_id,' . $request->user()->id . ',type,' . $request->input('type', $category->type),
+            'type' => 'sometimes|required|in:income,expense',
+        ]);
+
+        $category->update($validated);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Kategori berhasil diperbarui.',
+            'data' => $category
+        ]);
+    }
+
+    /**
+     * DELETE /api/categories/{id}
+     */
+    public function destroy($id)
+    {
+        $category = Category::where('user_id', auth()->id())->findOrFail($id);
+
+        // Cegah hapus jika masih dipakai di expenses (karena hanya expense pakai langsung)
+        if ($category->type === 'expense' && $category->expenses()->count() > 0) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Tidak bisa menghapus kategori pengeluaran yang masih digunakan.'
+            ], 422);
+        }
+
         $category->delete();
-        return response()->json(null, 204);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Kategori berhasil dihapus.'
+        ]);
+    }
+
+    /**
+     * Opsional: GET /api/categories/options
+     * Untuk dropdown di frontend (lebih ringan, tanpa pagination)
+     */
+    public function options(Request $request)
+    {
+        $type = $request->query('type', 'expense'); // default: expense
+
+        $categories = Category::where('user_id', $request->user()->id)
+                              ->where('type', $type)
+                              ->orderBy('name')
+                              ->get(['id', 'name']);
+
+        return response()->json([
+            'success' => true,
+            'data' => $categories
+        ]);
     }
 }

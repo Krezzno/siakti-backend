@@ -17,12 +17,22 @@ return new class extends Migration
                   ->constrained()
                   ->cascadeOnDelete();
             $table->foreignId('category_id')
-                  ->constrained('categories')
+                  ->constrained()
+                  ->cascadeOnDelete();
+            $table->foreignId('payment_method_id')
+                  ->constrained()
                   ->cascadeOnDelete();
             $table->decimal('amount', 15, 2);
-            $table->text('description')->nullable();
-            $table->date('date')->nullable();
+            $table->date('date');
+            $table->text('note')->nullable(); // sesuai ERD
             $table->timestamps();
+        });
+
+        // Index untuk performa query
+        Schema::table('expenses', function (Blueprint $table) {
+            $table->index(['user_id', 'date']);
+            $table->index('category_id');
+            $table->index('payment_method_id');
         });
     }
 

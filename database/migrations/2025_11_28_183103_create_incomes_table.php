@@ -17,11 +17,23 @@ return new class extends Migration
                   ->constrained()
                   ->cascadeOnDelete();
             $table->foreignId('income_source_id')
-                  ->constrained('income_sources')
+                  ->constrained()
+                  ->cascadeOnDelete();
+            $table->foreignId('payment_method_id') // ✅ tambahkan ini
+                  ->constrained()
                   ->cascadeOnDelete();
             $table->decimal('amount', 15, 2);
             $table->date('date');
+            $table->text('description')->nullable(); // ✅ tambahkan
+            $table->boolean('is_regular')->default(false); // ✅ rutin (gaji) vs insidental (bonus)
             $table->timestamps();
+        });
+
+        // Optional: tambahkan index untuk query cepat
+        Schema::table('incomes', function (Blueprint $table) {
+            $table->index(['user_id', 'date']);
+            $table->index('income_source_id');
+            $table->index('payment_method_id');
         });
     }
 

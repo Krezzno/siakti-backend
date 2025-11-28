@@ -1,49 +1,74 @@
 <?php
 
-namespace App\Http\Controllers\API;
+namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\IncomeSource;
 use Illuminate\Http\Request;
-use Illuminate\Http\JsonResponse;
 
 class IncomeSourceController extends Controller
 {
-    public function index(Request $request): JsonResponse
+    public function index(Request $request)
     {
-        return response()->json($request->user()->incomeSources);
+        $sources = IncomeSource::where('user_id', $request->user()->id)
+                               ->orderBy('name')
+                               ->get(['id', 'name']);
+
+        return response()->json(['success' => true, 'data' => $sources]);
     }
 
-    public function store(Request $request): JsonResponse
+    public function store(Request $request)
     {
-        $data = $request->validate([
-            'source_name' => 'required|string|max:255|unique:income_sources,source_name,NULL,id,user_id,' . $request->user()->id,
+        $validated = $request->validate([
+            'name' => 'required|string|max:100|unique:income_sources,name,NULL,id,user_id,' . $request->user()->id
         ]);
 
-        $source = $request->user()->incomeSources()->create($data);
-        return response()->json($source, 201);
-    }
-
-    public function show(IncomeSource $incomeSource): JsonResponse
-    {
-        $this->authorize('view', $incomeSource);
-        return response()->json($incomeSource);
-    }
-
-    public function update(Request $request, IncomeSource $incomeSource): JsonResponse
-    {
-        $this->authorize('update', $incomeSource);
-        $data = $request->validate([
-            'source_name' => 'sometimes|required|string|max:255|unique:income_sources,source_name,' . $incomeSource->id . ',id,user_id,' . $request->user()->id,
+        $source = IncomeSource::create([
+            'user_id' => $request->user()->id,
+            'name' => $validated['name']
         ]);
-        $incomeSource->update($data);
-        return response()->json($incomeSource);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Sumber penghasilan berhasil ditambahkan.',
+            'data' => $source
+        ], 201);
     }
 
-    public function destroy(IncomeSource $incomeSource): JsonResponse
+    public function update(Request $request, $id)
     {
-        $this->authorize('delete', $incomeSource);
-        $incomeSource->delete();
-        return response()->json(null, 204);
+        $source = IncomeSource::where('user_id', auth()->id())->findOrFail($id);
+
+        $validated = $request->validate([
+            'name' => 'required|string|max:100|unique:income_sources,name,' . $id . ',id,user_id,' . $request->user()->id
+        ]);
+
+        $source->update($validated);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Sumber penghasilan berhasil diperbarui.',
+            'data' => $source
+        ]);
+    }
+
+    public function destroy($id)
+    {
+        $source = IncomeSource::where('user_id', auth()->id())->findOrFail($id);
+
+        // Cegah hapus jika masih dipakai di incomes
+        if ($source->incomes()->count() > 0) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Tidak bisa menghapus sumber penghasilan yang masih digunakan.'
+            ], 422);
+        }
+
+        $source->delete();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Sumber penghasilan berhasil dihapus.'
+        ]);
     }
 }

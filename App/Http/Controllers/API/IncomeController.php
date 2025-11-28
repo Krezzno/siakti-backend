@@ -1,78 +1,131 @@
 <?php
 
-namespace App\Http\Controllers\API;
+namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Income;
 use Illuminate\Http\Request;
-use Illuminate\Http\JsonResponse;
 
 class IncomeController extends Controller
 {
-    public function index(Request $request): JsonResponse
+    public function index(Request $request)
     {
-        $incomes = $request->user()
-            ->incomes()
-            ->with(['incomeSource', 'category'])
-            ->latest()
-            ->get();
-        return response()->json($incomes);
-    }
+        $user = $request->user();
 
-    public function store(Request $request): JsonResponse
+        $query = Income::with(['incomeSource:id,name', 'paymentMethod:id,name,type'])
+                       ->where('user_id', $user->id)
+                       ->orderBy('date', 'desc')
+                       ->orderBy('created_at', 'desc');
+
+        // Filter opsional: date_from, date_to, source_id
+        if ($request->filled('date_from')) {
+            $query->where('date', '>=', $request->date_from);
+        }
+        if ($request->filled('date_to')) {
+            $query->where('date', '<=', $request->date_to);
+        }
+        if ($request->filled('source_id')) {
+            $query->where('income_source_id', $request->source_id);
+        }
+
+        $incomes = $query->paginate(15);
+
+        return response()->json([
+            'success' => true,
+            'data' => $incomes
+        ]);
+    }
+    public function store(Request $request)
     {
-        $data = $request->validate([
+        $validated = $request->validate([
             'income_source_id' => 'required|exists:income_sources,id',
-            'category_id' => 'nullable|exists:categories,id',
+            'payment_method_id' => 'required|exists:payment_methods,id',
             'amount' => 'required|numeric|min:0.01',
-            'date' => 'nullable|date',
-            'description' => 'nullable|string|max:1000',
+            'date' => 'required|date|before_or_equal:today',
+            'description' => 'nullable|string|max:500',
+            'is_regular' => 'boolean',
         ]);
 
-        $request->user()->incomeSources()->findOrFail($data['income_source_id']);
-        if (isset($data['category_id'])) {
-            $request->user()->categories()->findOrFail($data['category_id']);
-        }
+        // Pastikan income_source & payment_method milik user yg sama
+        $user = $request->user();
+        $source = \App\Models\IncomeSource::where('id', $validated['income_source_id'])
+                                          ->where('user_id', $user->id)
+                                          ->firstOrFail();
+        $method = \App\Models\PaymentMethod::where('id', $validated['payment_method_id'])
+                                           ->where('user_id', $user->id)
+                                           ->firstOrFail();
 
-        $income = $request->user()->incomes()->create($data);
-        $income->load(['incomeSource', 'category']);
-        return response()->json($income, 201);
+        $income = Income::create([
+            'user_id' => $user->id,
+            'income_source_id' => $source->id,
+            'payment_method_id' => $method->id,
+            'amount' => $validated['amount'],
+            'date' => $validated['date'],
+            'description' => $validated['description'] ?? null,
+            'is_regular' => $request->boolean('is_regular', false),
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Penghasilan berhasil ditambahkan.',
+            'data' => $income->load(['incomeSource:id,name', 'paymentMethod:id,name,type'])
+        ], 201);
     }
 
-    public function show(Income $income): JsonResponse
+    public function show($id)
     {
-        $this->authorize('view', $income);
-        $income->load(['incomeSource', 'category']);
-        return response()->json($income);
+        $income = Income::with(['incomeSource:id,name', 'paymentMethod:id,name,type'])
+                        ->where('user_id', auth()->id())
+                        ->findOrFail($id);
+
+        return response()->json(['success' => true, 'data' => $income]);
     }
 
-    public function update(Request $request, Income $income): JsonResponse
+    public function update(Request $request, $id)
     {
-        $this->authorize('update', $income);
-        $data = $request->validate([
+        $income = Income::where('user_id', auth()->id())->findOrFail($id);
+
+        $validated = $request->validate([
             'income_source_id' => 'sometimes|required|exists:income_sources,id',
-            'category_id' => 'nullable|exists:categories,id',
+            'payment_method_id' => 'sometimes|required|exists:payment_methods,id',
             'amount' => 'sometimes|required|numeric|min:0.01',
-            'date' => 'nullable|date',
-            'description' => 'nullable|string|max:1000',
+            'date' => 'sometimes|required|date|before_or_equal:today',
+            'description' => 'nullable|string|max:500',
+            'is_regular' => 'boolean',
         ]);
 
-        if (isset($data['income_source_id'])) {
-            $request->user()->incomeSources()->findOrFail($data['income_source_id']);
-        }
-        if (isset($data['category_id'])) {
-            $request->user()->categories()->findOrFail($data['category_id']);
+        // Validasi kepemilikan relasi jika diubah
+        if ($request->filled('income_source_id')) {
+            $source = \App\Models\IncomeSource::where('id', $validated['income_source_id'])
+                                              ->where('user_id', auth()->id())
+                                              ->firstOrFail();
+            $validated['income_source_id'] = $source->id;
         }
 
-        $income->update($data);
-        $income->load(['incomeSource', 'category']);
-        return response()->json($income);
+        if ($request->filled('payment_method_id')) {
+            $method = \App\Models\PaymentMethod::where('id', $validated['payment_method_id'])
+                                               ->where('user_id', auth()->id())
+                                               ->firstOrFail();
+            $validated['payment_method_id'] = $method->id;
+        }
+
+        $income->update($validated);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Penghasilan berhasil diperbarui.',
+            'data' => $income->fresh()->load(['incomeSource:id,name', 'paymentMethod:id,name,type'])
+        ]);
     }
 
-    public function destroy(Income $income): JsonResponse
+    public function destroy($id)
     {
-        $this->authorize('delete', $income);
+        $income = Income::where('user_id', auth()->id())->findOrFail($id);
         $income->delete();
-        return response()->json(null, 204);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Penghasilan berhasil dihapus.'
+        ]);
     }
 }

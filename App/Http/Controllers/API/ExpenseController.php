@@ -1,78 +1,127 @@
 <?php
 
-namespace App\Http\Controllers\API;
+namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\Expense;
 use Illuminate\Http\Request;
-use Illuminate\Http\JsonResponse;
 
 class ExpenseController extends Controller
 {
-    public function index(Request $request): JsonResponse
+    public function index(Request $request)
     {
-        $expenses = $request->user()
-            ->expenses()
-            ->with(['category', 'budget'])
-            ->latest()
-            ->get();
-        return response()->json($expenses);
+        $user = $request->user();
+
+        $query = Expense::with(['category:id,name', 'paymentMethod:id,name,type'])
+                        ->where('user_id', $user->id)
+                        ->orderBy('date', 'desc')
+                        ->orderBy('created_at', 'desc');
+
+        if ($request->filled('date_from')) {
+            $query->where('date', '>=', $request->date_from);
+        }
+        if ($request->filled('date_to')) {
+            $query->where('date', '<=', $request->date_to);
+        }
+        if ($request->filled('category_id')) {
+            $query->where('category_id', $request->category_id);
+        }
+
+        $expenses = $query->paginate(15);
+
+        return response()->json([
+            'success' => true,
+            'data' => $expenses
+        ]);
     }
 
-    public function store(Request $request): JsonResponse
+    public function store(Request $request)
     {
-        $data = $request->validate([
+        $validated = $request->validate([
             'category_id' => 'required|exists:categories,id',
-            'budget_id' => 'nullable|exists:budgets,id',
+            'payment_method_id' => 'required|exists:payment_methods,id',
             'amount' => 'required|numeric|min:0.01',
-            'date' => 'nullable|date',
-            'description' => 'nullable|string|max:1000',
+            'date' => 'required|date|before_or_equal:today',
+            'note' => 'nullable|string|max:500',
         ]);
 
-        $request->user()->categories()->findOrFail($data['category_id']);
-        if (isset($data['budget_id'])) {
-            $request->user()->budgets()->findOrFail($data['budget_id']);
-        }
+        // Pastikan category & payment method milik user
+        $user = $request->user();
+        $category = \App\Models\Category::where('id', $validated['category_id'])
+                                        ->where('user_id', $user->id)
+                                        ->firstOrFail();
+        $method = \App\Models\PaymentMethod::where('id', $validated['payment_method_id'])
+                                           ->where('user_id', $user->id)
+                                           ->firstOrFail();
 
-        $expense = $request->user()->expenses()->create($data);
-        $expense->load(['category', 'budget']);
-        return response()->json($expense, 201);
+        $expense = Expense::create([
+            'user_id' => $user->id,
+            'category_id' => $category->id,
+            'payment_method_id' => $method->id,
+            'amount' => $validated['amount'],
+            'date' => $validated['date'],
+            'note' => $validated['note'] ?? null,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Pengeluaran berhasil ditambahkan.',
+            'data' => $expense->load(['category:id,name', 'paymentMethod:id,name,type'])
+        ], 201);
     }
 
-    public function show(Expense $expense): JsonResponse
+    public function show($id)
     {
-        $this->authorize('view', $expense);
-        $expense->load(['category', 'budget']);
-        return response()->json($expense);
+        $expense = Expense::with(['category:id,name', 'paymentMethod:id,name,type'])
+                          ->where('user_id', auth()->id())
+                          ->findOrFail($id);
+
+        return response()->json(['success' => true, 'data' => $expense]);
     }
 
-    public function update(Request $request, Expense $expense): JsonResponse
+    public function update(Request $request, $id)
     {
-        $this->authorize('update', $expense);
-        $data = $request->validate([
+        $expense = Expense::where('user_id', auth()->id())->findOrFail($id);
+
+        $validated = $request->validate([
             'category_id' => 'sometimes|required|exists:categories,id',
-            'budget_id' => 'nullable|exists:budgets,id',
+            'payment_method_id' => 'sometimes|required|exists:payment_methods,id',
             'amount' => 'sometimes|required|numeric|min:0.01',
-            'date' => 'nullable|date',
-            'description' => 'nullable|string|max:1000',
+            'date' => 'sometimes|required|date|before_or_equal:today',
+            'note' => 'nullable|string|max:500',
         ]);
 
-        if (isset($data['category_id'])) {
-            $request->user()->categories()->findOrFail($data['category_id']);
-        }
-        if (isset($data['budget_id'])) {
-            $request->user()->budgets()->findOrFail($data['budget_id']);
+        if ($request->filled('category_id')) {
+            $category = \App\Models\Category::where('id', $validated['category_id'])
+                                            ->where('user_id', auth()->id())
+                                            ->firstOrFail();
+            $validated['category_id'] = $category->id;
         }
 
-        $expense->update($data);
-        $expense->load(['category', 'budget']);
-        return response()->json($expense);
+        if ($request->filled('payment_method_id')) {
+            $method = \App\Models\PaymentMethod::where('id', $validated['payment_method_id'])
+                                               ->where('user_id', auth()->id())
+                                               ->firstOrFail();
+            $validated['payment_method_id'] = $method->id;
+        }
+
+        $expense->update($validated);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Pengeluaran berhasil diperbarui.',
+            'data' => $expense->fresh()->load(['category:id,name', 'paymentMethod:id,name,type'])
+        ]);
     }
 
-    public function destroy(Expense $expense): JsonResponse
+    public function destroy($id)
     {
-        $this->authorize('delete', $expense);
+        $expense = Expense::where('user_id', auth()->id())->findOrFail($id);
         $expense->delete();
-        return response()->json(null, 204);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Pengeluaran berhasil dihapus.'
+        ]);
     }
 }

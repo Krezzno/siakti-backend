@@ -16,8 +16,13 @@ return new class extends Migration
             $table->foreignId('user_id')
                   ->constrained()
                   ->cascadeOnDelete();
-            $table->string('source_name');
+            $table->string('name'); // e.g., "Gaji", "Freelance", "Bonus"
             $table->timestamps();
+        });
+
+        // Index untuk pencarian cepat
+        Schema::table('income_sources', function (Blueprint $table) {
+            $table->index('user_id');
         });
     }
 

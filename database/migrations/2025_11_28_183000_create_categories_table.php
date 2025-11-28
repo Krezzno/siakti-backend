@@ -6,29 +6,25 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
-    /**
-     * Run the migrations.
-     */
     public function up(): void
     {
-        Schema::create('budgets', function (Blueprint $table) {
+        Schema::create('categories', function (Blueprint $table) {
             $table->id();
             $table->foreignId('user_id')
                   ->constrained()
                   ->cascadeOnDelete();
-            $table->string('budget_name');
-            $table->decimal('total_amount', 15, 2);
-            $table->date('start_date')->nullable();
-            $table->date('end_date')->nullable();
+            $table->string('name');
+            $table->enum('type', ['income', 'expense']); // penting: bedakan kategori pemasukan & pengeluaran
             $table->timestamps();
+        });
+
+        Schema::table('categories', function (Blueprint $table) {
+            $table->index(['user_id', 'type']); // optimasi filter
         });
     }
 
-    /**
-     * Reverse the migrations.
-     */
     public function down(): void
     {
-        Schema::dropIfExists('budgets');
+        Schema::dropIfExists('categories');
     }
 };
